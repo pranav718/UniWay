@@ -19,15 +19,12 @@ export async function POST(request: Request) {
     if (!parsed.success) {
       return badRequest("Validation failed", formatZodError(parsed.error), undefined, request);
     }
+    const { email, password } = parsed.data;
 
-  const { email, password } = parsed.data;
+    const accountLimitResponse = withKeyedRateLimit(`login:${email}`, { maxRequests: 8, windowMs: 60_000 });
+    if (accountLimitResponse) return accountLimitResponse;
 
-  // Complements the per-address limit above: rotating client addresses cannot dodge a
-  // per-account cap on credential guessing.
-  const accountLimitResponse = withKeyedRateLimit(`login:${email}`, { maxRequests: 8, windowMs: 60_000 });
-  if (accountLimitResponse) return accountLimitResponse;
-
-  const rows = await sql`
+    const rows = await sql`
       SELECT id, email, password_hash, name, avatar_url, auth_provider, created_at
       FROM users
       WHERE lower(email) = ${email}
@@ -35,16 +32,12 @@ export async function POST(request: Request) {
     `;
 
     if (!rows.length) {
-      // Burn the same scrypt cost as a real check so an unknown email is not observable
-      // through response timing.
       await verifyPassword(password, DUMMY_PASSWORD_HASH);
       return unauthorized("Invalid email or password", undefined, request);
     }
 
     const userRow = rows[0];
     if (!userRow.password_hash) {
-      // Generic 401 (not a distinct "registered with Google" response) so the endpoint does
-      // not confirm which email addresses hold accounts.
       await verifyPassword(password, DUMMY_PASSWORD_HASH);
       return unauthorized("Invalid email or password", undefined, request);
     }

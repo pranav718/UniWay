@@ -6,11 +6,8 @@ import singletonLogger from "@/lib/logger";
 let AUTH_SECRET = process.env.AUTH_SECRET || "";
 
 if (!AUTH_SECRET) {
-  // During Next.js production build ('next build'), page data and route configs are collected
-  // statically without production runtime secrets. Fail fast only at runtime outside build phase.
   const isProductionBuild = process.env.NEXT_PHASE === "phase-production-build";
   if (process.env.NODE_ENV === "production" && !isProductionBuild) {
-    // Failing fast beats shipping an instance every attacker can mint valid tokens for.
     throw new Error(
       "AUTH_SECRET must be configured in production; refusing to start with the built-in fallback secret."
     );
@@ -24,7 +21,8 @@ if (!AUTH_SECRET) {
 export function hashPassword(password: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const salt = crypto.randomBytes(SALT_BYTES);
-    crypto.scrypt(password, salt, KEY_BYTES, (err, derivedKey) => {      if (err) return reject(err);
+    crypto.scrypt(password, salt, KEY_BYTES, (err, derivedKey) => {
+      if (err) return reject(err);
       resolve(`${salt.toString("hex")}:${derivedKey.toString("hex")}`);
     });
   });
@@ -34,9 +32,6 @@ const HEX_PATTERN = /^[0-9a-f]+$/i;
 const SALT_BYTES = 16;
 const KEY_BYTES = 64;
 
-// A valid-format hash of a throwaway value. Verification against it burns the same scrypt cost
-// as a real credential check so an unknown email is indistinguishable in timing from a wrong
-// password on a known email.
 const DUMMY_HASH_SALT = crypto.randomBytes(SALT_BYTES).toString("hex");
 export const DUMMY_PASSWORD_HASH = `${DUMMY_HASH_SALT}:${crypto
   .scryptSync("", Buffer.from(DUMMY_HASH_SALT, "hex"), KEY_BYTES)
@@ -47,10 +42,6 @@ export function verifyPassword(password: string, storedHash: string): Promise<bo
     const parts = storedHash.split(":");
     if (parts.length !== 2) return resolve(false);
     const [saltHex, keyHex] = parts;
-    // Reject corrupted or truncated hashes before handing them to scrypt, which throws a
-    // RangeError for a zero-length key and would surface as a 500 instead of a 401.
-    // The lengths must match exactly: scrypt output is prefix-stable, so deriving a shorter
-    // key from a truncated hash would otherwise still compare equal.
     if (!HEX_PATTERN.test(saltHex) || !HEX_PATTERN.test(keyHex)) return resolve(false);
     if (saltHex.length !== SALT_BYTES * 2 || keyHex.length !== KEY_BYTES * 2) return resolve(false);
 
@@ -173,8 +164,6 @@ export async function verifyGoogleIdToken(
       data.iss === undefined || data.iss === "accounts.google.com" || data.iss === "https://accounts.google.com";
     if (!validIssuer) return null;
 
-    // Without an audience check any ID token minted for any Google client would be accepted,
-    // so a token from an unrelated app could be replayed against UniWay.
     const googleClientId = process.env.GOOGLE_CLIENT_ID;
     if (googleClientId) {
       if (data.aud !== googleClientId) return null;
@@ -204,9 +193,6 @@ export async function getAuthenticatedUser(request: Request): Promise<UserPublic
   const payload = verifyJwt(token);
   if (!payload || !payload.sub) return null;
 
-  // A database failure must not look like an invalid session: callers translate null into
-  // 401, and the mobile client clears its stored token on 401. Let the error propagate so
-  // the route can return 500 and keep the client signed in.
   const rows = await sql`
     SELECT id, email, name, avatar_url, auth_provider, created_at
     FROM users

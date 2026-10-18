@@ -36,9 +36,6 @@ class AuthModal extends StatefulWidget {
       ),
     );
 
-    // Anything other than a completed sign-in counts as choosing to browse as a guest,
-    // including dismissing the sheet by dragging or tapping the barrier. This keeps the
-    // ProfileBadge and resume behavior consistent with the visible state.
     if (!authController.isAuthenticated && !authController.isGuest) {
       await authController.continueAsGuest();
     }
@@ -99,7 +96,7 @@ class _AuthModalState extends State<AuthModal> {
       final navigator = Navigator.of(context);
       final idToken = await _googleProvider.getIdToken();
       if (!mounted) return;
-      if (idToken == null) return; // user closed the Google sheet
+      if (idToken == null) return;
 
       final success = await widget.authController.loginWithGoogle(idToken);
       if (!mounted) return;

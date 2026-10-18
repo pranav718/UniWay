@@ -12,9 +12,6 @@ const defaultConfig: RateLimitConfig = {
   windowMs: 60_000,
 };
 
-// Long-lived processes (self-hosted / warm serverless instances) otherwise accumulate one
-// Map entry per unique client forever. Sweeping is O(map size), so it's time-gated rather
-// than run on every request.
 const SWEEP_INTERVAL_MS = 60_000;
 let lastSweep = Date.now();
 
@@ -47,9 +44,6 @@ function checkRateLimit(
   return { allowed: true, remaining: config.maxRequests - entry.count, resetAt: entry.resetAt };
 }
 
-// Identity is taken from the first trusted proxy header available. Without a proxy in front of
-// the deployment these headers are absent, so every client shares an "unknown-local" bucket —
-// acceptable for local dev, but production must run behind a proxy that sets one of these.
 function clientKeyOf(request: Request): string {
   const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   if (forwarded) return forwarded;

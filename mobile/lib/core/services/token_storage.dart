@@ -1,9 +1,6 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Persists the session JWT. Profile data and the guest flag are non-sensitive and stay in
-/// SharedPreferences; only the bearer token is stored encrypted (Keychain / EncryptedSharedPreferences)
-/// so a backup extraction cannot mint a valid session.
 abstract class TokenStorage {
   Future<String?> read();
 
@@ -30,8 +27,6 @@ class SecureTokenStorage implements TokenStorage {
   Future<void> delete() => _storage.delete(key: _key);
 }
 
-/// SharedPreferences-backed token storage. Intended for tests and as a stepping stone only —
-/// it offers no at-rest encryption.
 class SharedPreferencesTokenStorage implements TokenStorage {
   static const String _key = 'uniway_auth_token';
 

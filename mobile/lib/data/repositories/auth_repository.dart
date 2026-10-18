@@ -37,8 +37,6 @@ class AuthRepository {
     return _prefs!;
   }
 
-  /// Returns the stored session token, transparently migrating a value saved by earlier
-  /// versions in plaintext SharedPreferences into encrypted storage.
   Future<String?> getSavedToken() async {
     final stored = await _tokenStorage.read();
     if (stored != null) return stored;
@@ -182,7 +180,6 @@ class AuthRepository {
 
       return await getSavedUser();
     } catch (_) {
-      // Offline fallback: return locally cached user
       return await getSavedUser();
     }
   }

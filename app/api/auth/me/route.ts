@@ -5,7 +5,6 @@ import { withRateLimit } from "@/lib/rate-limit";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  // The profile lookup is verified per request; cap how often it can be polled per client.
   const rateLimitResponse = withRateLimit(request, { maxRequests: 30, windowMs: 60_000 });
   if (rateLimitResponse) return rateLimitResponse;
 

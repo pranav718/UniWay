@@ -42,7 +42,6 @@ export async function POST(request: Request) {
 
       return successResponse({ user, token }, 201);
     } catch (error) {
-      // Two concurrent registrations can both pass the pre-check; the unique index decides.
       if (isUniqueViolation(error)) {
         return conflict("An account with this email already exists", undefined, request);
       }

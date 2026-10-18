@@ -39,8 +39,6 @@ class AuthController extends ChangeNotifier {
         _user = null;
       }
     } catch (_) {
-      // Storage or profile reads can fail (for example a revoked token on a cold start).
-      // Fall back to any cached profile, then to guest mode.
       try {
         _user = await _repository.getSavedUser();
       } catch (_) {
@@ -60,8 +58,6 @@ class AuthController extends ChangeNotifier {
     super.dispose();
   }
 
-  // Initialize and login calls can outlive the widget that owns this controller (for example
-  // when the map screen is replaced mid-request), so never notify after disposal.
   void _notify() {
     if (!_isDisposed) notifyListeners();
   }
@@ -146,8 +142,6 @@ class AuthController extends ChangeNotifier {
 
   Future<void> logout() async {
     await _repository.clearSession();
-    // Also end the Google web session so the next sign-in asks again. Failures are
-    // non-fatal: the local session is already cleared.
     try {
       await _googleIdentityProvider?.signOut();
     } catch (_) {}
