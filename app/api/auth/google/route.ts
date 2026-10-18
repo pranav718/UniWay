@@ -40,6 +40,8 @@ export async function POST(request: Request) {
       const updated = await sql`
         UPDATE users
         SET avatar_url = COALESCE(${picture || null}, avatar_url),
+            password_hash = NULL,
+            auth_provider = 'google',
             updated_at = now()
         WHERE id = ${existingRows[0].id}
         RETURNING id, email, name, avatar_url, auth_provider, created_at

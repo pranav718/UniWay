@@ -168,6 +168,12 @@ export async function verifyGoogleIdToken(
     if (googleClientId) {
       if (data.aud !== googleClientId) return null;
     } else {
+      if (process.env.NODE_ENV === "production") {
+        singletonLogger.error(
+          "GOOGLE_CLIENT_ID is not configured in production; refusing to verify Google ID token without audience validation."
+        );
+        return null;
+      }
       singletonLogger.warn(
         "GOOGLE_CLIENT_ID is not configured; Google ID token audience is not being verified."
       );

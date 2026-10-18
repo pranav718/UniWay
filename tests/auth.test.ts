@@ -82,6 +82,72 @@ describe("Authentication Library", () => {
     expect(result).toBeNull();
     fetchSpy.mockRestore();
   });
+
+  it("fails closed in production when GOOGLE_CLIENT_ID is not configured", async () => {
+    const prevId = process.env.GOOGLE_CLIENT_ID;
+    delete process.env.GOOGLE_CLIENT_ID;
+    vi.stubEnv("NODE_ENV", "production");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          email: "victim@example.com",
+          name: "Victim",
+          email_verified: "true",
+          aud: "any-client-id",
+        }),
+        { status: 200 }
+      )
+    );
+
+    try {
+      const result = await verifyGoogleIdToken("valid_token_for_different_app");
+      expect(result).toBeNull();
+    } finally {
+      fetchSpy.mockRestore();
+      vi.unstubAllEnvs();
+      if (prevId !== undefined) {
+        process.env.GOOGLE_CLIENT_ID = prevId;
+      } else {
+        delete process.env.GOOGLE_CLIENT_ID;
+      }
+    }
+  });
+
+  it("accepts google token in production when audience matches GOOGLE_CLIENT_ID", async () => {
+    const prevId = process.env.GOOGLE_CLIENT_ID;
+    process.env.GOOGLE_CLIENT_ID = "uniway-client-id.apps.googleusercontent.com";
+    vi.stubEnv("NODE_ENV", "production");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          email: "student@example.com",
+          name: "Student",
+          email_verified: "true",
+          aud: "uniway-client-id.apps.googleusercontent.com",
+        }),
+        { status: 200 }
+      )
+    );
+
+    try {
+      const result = await verifyGoogleIdToken("valid_token");
+      expect(result).toEqual({
+        email: "student@example.com",
+        name: "Student",
+        picture: undefined,
+      });
+    } finally {
+      fetchSpy.mockRestore();
+      vi.unstubAllEnvs();
+      if (prevId !== undefined) {
+        process.env.GOOGLE_CLIENT_ID = prevId;
+      } else {
+        delete process.env.GOOGLE_CLIENT_ID;
+      }
+    }
+  });
 });
 
 describe("Auth API Endpoints", () => {
@@ -567,6 +633,26 @@ describe("Auth API edge cases", () => {
       const body = await res.json();
       expect(body.data.user.avatar_url).toBe("https://example.com/avatar.jpg");
       expect(mockSql().mock.calls).toHaveLength(2);
+    });
+
+    it("clears any pre-existing password_hash when linking an existing account to prevent pre-hijacking", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(googleTokenResponse());
+
+      mockSql()
+        .mockResolvedValueOnce([validUser({ auth_provider: "email" })])
+        .mockResolvedValueOnce([
+          validUser({ auth_provider: "google", avatar_url: "https://example.com/avatar.jpg" }),
+        ]);
+
+      const res = await googleAuth(
+        authRequest("/api/auth/google", { idToken: "valid" }, { ip: "198.51.100.23" })
+      );
+
+      expect(res.status).toBe(200);
+      const updateCall = mockSql().mock.calls[1];
+      const sqlStrings = (updateCall[0] as string[]).join(" ");
+      expect(sqlStrings).toContain("password_hash = NULL");
+      expect(sqlStrings).toContain("auth_provider = 'google'");
     });
 
     it("returns 500 when persisting the Google account fails", async () => {
