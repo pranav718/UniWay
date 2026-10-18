@@ -6,7 +6,10 @@ import singletonLogger from "@/lib/logger";
 let AUTH_SECRET = process.env.AUTH_SECRET || "";
 
 if (!AUTH_SECRET) {
-  if (process.env.NODE_ENV === "production") {
+  // During Next.js production build ('next build'), page data and route configs are collected
+  // statically without production runtime secrets. Fail fast only at runtime outside build phase.
+  const isProductionBuild = process.env.NEXT_PHASE === "phase-production-build";
+  if (process.env.NODE_ENV === "production" && !isProductionBuild) {
     // Failing fast beats shipping an instance every attacker can mint valid tokens for.
     throw new Error(
       "AUTH_SECRET must be configured in production; refusing to start with the built-in fallback secret."
