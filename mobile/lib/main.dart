@@ -1,8 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'core/services/google_sign_in_service.dart';
 import 'presentation/screens/map_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // Warm up Google Sign-In so the first interactive sign-in is fast. Configuration
+  // problems surface later via the auth sheet's SnackBar, never as an app crash.
+  unawaited(
+    GoogleSignInService().ensureInitialized().catchError((Object error) {}),
+  );
   runApp(const UniWayApp());
 }
 
