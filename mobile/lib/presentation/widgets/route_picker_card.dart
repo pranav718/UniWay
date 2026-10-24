@@ -131,15 +131,39 @@ class RoutePickerCard extends StatelessWidget {
                       ),
                     )
                   : hasRoute
-                      ? FilledButton.tonalIcon(
-                          onPressed: controller.clearRoute,
-                          icon: const Icon(Icons.close, size: 18),
-                          label: const Text('Clear'),
-                          style: FilledButton.styleFrom(
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
+                      ? Row(
+                          children: [
+                            Expanded(
+                              flex: 3,
+                              child: FilledButton.icon(
+                                onPressed: controller.startNavigation,
+                                icon: const Icon(Icons.navigation, size: 18),
+                                label: const Text(
+                                  'Start',
+                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                                style: FilledButton.styleFrom(
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
+                              ),
                             ),
-                          ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              flex: 2,
+                              child: FilledButton.tonalIcon(
+                                onPressed: controller.clearRoute,
+                                icon: const Icon(Icons.close, size: 18),
+                                label: const Text('Clear'),
+                                style: FilledButton.styleFrom(
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         )
                       : FilledButton.icon(
                           onPressed: controller.canGo ? controller.fetchRoute : null,

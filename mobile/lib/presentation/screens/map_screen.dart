@@ -13,6 +13,8 @@ import '../map/user_location_layer.dart';
 import '../widgets/auth_modal.dart';
 import '../widgets/debug_panel.dart';
 import '../widgets/location_status_chip.dart';
+import '../widgets/navigation_bottom_bar.dart';
+import '../widgets/navigation_step_banner.dart';
 import '../widgets/profile_badge.dart';
 import '../widgets/route_picker_card.dart';
 import '../widgets/route_start_notice.dart';
@@ -56,6 +58,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   bool _isRedrawing = false;
   bool _redrawPending = false;
   bool _disposed = false;
+  bool _userDraggedCamera = false;
+  bool _wasNavigating = false;
 
   @override
   void initState() {
@@ -160,11 +164,49 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _userLocationLayer?.update(snapshot);
     final map = _mapController;
     if (map != null) {
-      _syncStartConnector(map).catchError((_) {});
+      if (_controller.isNavigating) {
+        if (!_userDraggedCamera) {
+          _trackUserInNavigation(map, snapshot);
+        }
+      } else {
+        _syncStartConnector(map).catchError((_) {});
+      }
     }
   }
 
+  void _recenterNavigation() {
+    setState(() => _userDraggedCamera = false);
+    final map = _mapController;
+    final snap = _latestSnapshot;
+    if (map == null || snap == null) return;
+    _trackUserInNavigation(map, snap);
+  }
+
+  void _trackUserInNavigation(
+    MapLibreMapController map,
+    LocationSnapshot snapshot,
+  ) {
+    final step = _controller.currentStep;
+    final targetBearing = step?.targetBearing ?? 0.0;
+    map.animateCamera(
+      CameraUpdate.newCameraPosition(
+        CameraPosition(
+          target: LatLng(snapshot.latitude, snapshot.longitude),
+          zoom: 18.0,
+          tilt: 40.0,
+          bearing: targetBearing,
+        ),
+      ),
+    );
+  }
+
   void _onRoutingStateChanged() {
+    final isNav = _controller.isNavigating;
+    if (isNav && !_wasNavigating) {
+      _userDraggedCamera = false;
+      _recenterNavigation();
+    }
+    _wasNavigating = isNav;
     _syncMapWithState().catchError((_) {});
   }
 
@@ -269,7 +311,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
     if (_disposed || !mounted) return;
 
-    _fitRouteBounds(map, route.points);
+    if (!_controller.isNavigating) {
+      _fitRouteBounds(map, route.points);
+    }
   }
 
   Future<void> _syncStartConnector(MapLibreMapController map) async {
@@ -279,7 +323,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     if (snapshot == null ||
         route == null ||
         route.points.isEmpty ||
-        !_controller.isGpsOrigin) {
+        !_controller.isGpsOrigin ||
+        _controller.isNavigating) {
       await _startConnector.clear(map);
       return;
     }
@@ -383,117 +428,151 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         builder: (context, _) {
           return Stack(
             children: [
-              if (widget.mapBuilder != null)
-                widget.mapBuilder!(context, _onMapCreated, _onStyleLoaded)
-              else
-                MapLibreMap(
-                  styleString: MapConstants.openFreeMapLibertyStyle,
-                  initialCameraPosition: const CameraPosition(
-                    target: LatLng(
-                      MapConstants.mujLatitude,
-                      MapConstants.mujLongitude,
-                    ),
-                    zoom: MapConstants.defaultZoom,
-                  ),
-                  onMapCreated: _onMapCreated,
-                  onStyleLoadedCallback: _onStyleLoaded,
-                  myLocationEnabled: false,
-                  trackCameraPosition: true,
-                  compassEnabled: true,
-                ),
-              SafeArea(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: Theme.of(context).colorScheme.surface,
-                              borderRadius: BorderRadius.circular(20),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.08),
-                                  blurRadius: 6,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.near_me,
-                                  size: 18,
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  'UniWay',
-                                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                ),
-                              ],
-                            ),
+              Listener(
+                onPointerDown: (_) {
+                  if (_controller.isNavigating && !_userDraggedCamera) {
+                    setState(() => _userDraggedCamera = true);
+                  }
+                },
+                child: widget.mapBuilder != null
+                    ? widget.mapBuilder!(context, _onMapCreated, _onStyleLoaded)
+                    : MapLibreMap(
+                        styleString: MapConstants.openFreeMapLibertyStyle,
+                        initialCameraPosition: const CameraPosition(
+                          target: LatLng(
+                            MapConstants.mujLatitude,
+                            MapConstants.mujLongitude,
                           ),
-                          ProfileBadge(authController: _authController),
-                        ],
+                          zoom: MapConstants.defaultZoom,
+                        ),
+                        onMapCreated: _onMapCreated,
+                        onStyleLoadedCallback: _onStyleLoaded,
+                        myLocationEnabled: false,
+                        trackCameraPosition: true,
+                        compassEnabled: true,
                       ),
-                    ),
-                    RoutePickerCard(
+              ),
+              if (_controller.isNavigating) ...[
+                SafeArea(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      NavigationStepBanner(controller: _controller),
+                      LocationStatusChip(
+                        _controller.locationListenable,
+                        reason: _controller.unavailableReason,
+                      ),
+                      RouteStatusBanner(controller: _controller),
+                    ],
+                  ),
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: SafeArea(
+                    child: NavigationBottomBar(
                       controller: _controller,
-                      onDestinationFocused: (d) => _mapController?.animateCamera(
-                        CameraUpdate.newLatLngZoom(LatLng(d.latitude, d.longitude), 17.5),
+                      showRecenter: _userDraggedCamera,
+                      onRecenter: _recenterNavigation,
+                    ),
+                  ),
+                ),
+              ] else ...[
+                SafeArea(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).colorScheme.surface,
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.08),
+                                    blurRadius: 6,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.near_me,
+                                    size: 18,
+                                    color: Theme.of(context).colorScheme.primary,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'UniWay',
+                                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            ProfileBadge(authController: _authController),
+                          ],
+                        ),
                       ),
-                    ),
-                    LocationStatusChip(
-                      _controller.locationListenable,
-                      reason: _controller.unavailableReason,
-                    ),
-                    RouteStatusBanner(controller: _controller),
-                    RouteStartNotice(controller: _controller),
-                  ],
+                      RoutePickerCard(
+                        controller: _controller,
+                        onDestinationFocused: (d) => _mapController?.animateCamera(
+                          CameraUpdate.newLatLngZoom(LatLng(d.latitude, d.longitude), 17.5),
+                        ),
+                      ),
+                      LocationStatusChip(
+                        _controller.locationListenable,
+                        reason: _controller.unavailableReason,
+                      ),
+                      RouteStatusBanner(controller: _controller),
+                      RouteStartNotice(controller: _controller),
+                    ],
+                  ),
                 ),
-              ),
-              Positioned(
-                right: 16,
-                bottom: 110,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    FloatingActionButton.small(
-                      heroTag: 'recenterUser',
-                      backgroundColor: Colors.white,
-                      foregroundColor: Colors.blue.shade800,
-                      onPressed: _recenterUser,
-                      tooltip: 'My Location',
-                      child: const Icon(Icons.my_location),
-                    ),
-                    const SizedBox(height: 8),
-                    FloatingActionButton.small(
-                      heroTag: 'recenterMuj',
-                      backgroundColor: Colors.white,
-                      foregroundColor: Colors.blue.shade800,
-                      onPressed: _recenterMuj,
-                      tooltip: 'Center on MUJ',
-                      child: const Icon(Icons.school),
-                    ),
-                  ],
+                Positioned(
+                  right: 16,
+                  bottom: 110,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      FloatingActionButton.small(
+                        heroTag: 'recenterUser',
+                        backgroundColor: Colors.white,
+                        foregroundColor: Colors.blue.shade800,
+                        onPressed: _recenterUser,
+                        tooltip: 'My Location',
+                        child: const Icon(Icons.my_location),
+                      ),
+                      const SizedBox(height: 8),
+                      FloatingActionButton.small(
+                        heroTag: 'recenterMuj',
+                        backgroundColor: Colors.white,
+                        foregroundColor: Colors.blue.shade800,
+                        onPressed: _recenterMuj,
+                        tooltip: 'Center on MUJ',
+                        child: const Icon(Icons.school),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 12,
-                child: SafeArea(
-                  child: DebugPanel(controller: _controller),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 12,
+                  child: SafeArea(
+                    child: DebugPanel(controller: _controller),
+                  ),
                 ),
-              ),
+              ],
             ],
           );
         },

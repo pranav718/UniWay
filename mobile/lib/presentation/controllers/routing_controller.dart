@@ -8,7 +8,9 @@ import '../../core/services/location_service.dart';
 import '../../core/services/location_snapshot.dart';
 import '../../data/models/campus_route.dart';
 import '../../data/models/destination.dart';
+import '../../data/models/navigation_step.dart';
 import '../../data/repositories/routing_repository.dart';
+import '../../core/utils/geo_distance.dart';
 
 const locationPublishInterval = Duration(milliseconds: 200);
 const locationRetryBaseDelay = Duration(seconds: 1);
@@ -36,6 +38,14 @@ class RoutingController extends ChangeNotifier {
   int _activeDestinationsRequestId = 0;
   int _destinationsRevision = 0;
   bool _disposed = false;
+
+  bool _isNavigating = false;
+  List<NavigationStep> _navigationSteps = const [];
+  int _currentStepIndex = 0;
+  double _remainingDistanceMeters = 0.0;
+  bool _isArrived = false;
+  int _consecutiveOffRouteCount = 0;
+  bool _isRerouting = false;
 
   final LocationFilter _locationFilter = LocationFilter();
   final ValueNotifier<LocationSnapshot?> _location = ValueNotifier(null);
@@ -162,6 +172,21 @@ class RoutingController extends ChangeNotifier {
       (_origin == null || _origin!.id != _destination!.id) &&
       !_isLoading &&
       !_isLocating;
+
+  bool get isNavigating => _isNavigating;
+  List<NavigationStep> get navigationSteps => _navigationSteps;
+  int get currentStepIndex => _currentStepIndex;
+  NavigationStep? get currentStep =>
+      (_isNavigating && _currentStepIndex < _navigationSteps.length)
+          ? _navigationSteps[_currentStepIndex]
+          : null;
+  NavigationStep? get nextStep =>
+      (_isNavigating && _currentStepIndex + 1 < _navigationSteps.length)
+          ? _navigationSteps[_currentStepIndex + 1]
+          : null;
+  double get remainingDistanceMeters => _remainingDistanceMeters;
+  bool get isArrived => _isArrived;
+  bool get isRerouting => _isRerouting;
 
   void setDestination(Destination? newDestination) {
     if (_destination == newDestination) return;
@@ -335,11 +360,52 @@ class RoutingController extends ChangeNotifier {
     if (result.isSuccess) {
       _currentRoute = result.route;
       _errorMessage = null;
+      if (_isNavigating && _currentRoute != null) {
+        _navigationSteps = generateNavigationSteps(
+          _currentRoute!.points,
+          destinationName: _destination?.name,
+        );
+        _currentStepIndex = 0;
+        _remainingDistanceMeters = _currentRoute!.distanceMeters;
+        _consecutiveOffRouteCount = 0;
+      }
     } else {
       _currentRoute = null;
       _errorMessage = result.errorMessage;
+      if (_isNavigating) {
+        _navigationSteps = const [];
+      }
     }
 
+    _isRerouting = false;
+    notifyListeners();
+  }
+
+  void startNavigation() {
+    if (_currentRoute == null || _currentRoute!.points.isEmpty) return;
+    _isNavigating = true;
+    _isArrived = false;
+    _consecutiveOffRouteCount = 0;
+    _isRerouting = false;
+    _navigationSteps = generateNavigationSteps(
+      _currentRoute!.points,
+      destinationName: _destination?.name,
+    );
+    _currentStepIndex = 0;
+    _remainingDistanceMeters = _currentRoute!.distanceMeters;
+    startLocationUpdates();
+    notifyListeners();
+  }
+
+  void stopNavigation() {
+    if (!_isNavigating) return;
+    _isNavigating = false;
+    _isArrived = false;
+    _consecutiveOffRouteCount = 0;
+    _isRerouting = false;
+    _navigationSteps = const [];
+    _currentStepIndex = 0;
+    _remainingDistanceMeters = 0.0;
     notifyListeners();
   }
 
@@ -356,6 +422,13 @@ class RoutingController extends ChangeNotifier {
     _errorMessage = null;
     _statusCode = null;
     _latencyMs = null;
+    _isNavigating = false;
+    _isArrived = false;
+    _consecutiveOffRouteCount = 0;
+    _isRerouting = false;
+    _navigationSteps = const [];
+    _currentStepIndex = 0;
+    _remainingDistanceMeters = 0.0;
   }
 
   void _subscribe() {
@@ -487,7 +560,77 @@ class RoutingController extends ChangeNotifier {
       _notifiedReason = _unavailableReason;
     }
     if (positionChanged || coarse) _location.value = _buildSnapshot(quality);
+    if (positionChanged && _isNavigating && _fix != null && _currentRoute != null) {
+      _updateNavigationProgress(_fix!.latitude, _fix!.longitude);
+    }
     if (coarse) notifyListeners();
+  }
+
+  void _updateNavigationProgress(double userLat, double userLng) {
+    if (_disposed || !_isNavigating || _currentRoute == null) return;
+
+    if (_currentRoute!.rawCoordinates.isNotEmpty) {
+      final offRouteDistance = distanceToPolylineMeters(
+        userLat,
+        userLng,
+        _currentRoute!.rawCoordinates,
+      );
+      if (offRouteDistance > 25.0) {
+        _consecutiveOffRouteCount++;
+        if (_consecutiveOffRouteCount >= 2 && !_isRerouting) {
+          _isRerouting = true;
+          notifyListeners();
+          fetchRoute(customLat: userLat, customLng: userLng);
+          return;
+        }
+      } else {
+        _consecutiveOffRouteCount = 0;
+      }
+    }
+
+    if (_destination != null) {
+      final distToDest = haversineMeters(
+        userLat,
+        userLng,
+        _destination!.latitude,
+        _destination!.longitude,
+      );
+      if (distToDest <= 12.0) {
+        _isArrived = true;
+        _remainingDistanceMeters = 0.0;
+        if (_navigationSteps.isNotEmpty) {
+          _currentStepIndex = _navigationSteps.length - 1;
+        }
+        notifyListeners();
+        return;
+      }
+    }
+
+    if (_currentStepIndex < _navigationSteps.length - 1) {
+      final nextStepTarget = _navigationSteps[_currentStepIndex + 1].point;
+      final distToNext = haversineMeters(
+        userLat,
+        userLng,
+        nextStepTarget.latitude,
+        nextStepTarget.longitude,
+      );
+      if (distToNext <= 12.0) {
+        _currentStepIndex++;
+        notifyListeners();
+        return;
+      }
+    }
+
+    if (_destination != null) {
+      final directDist = haversineMeters(
+        userLat,
+        userLng,
+        _destination!.latitude,
+        _destination!.longitude,
+      );
+      _remainingDistanceMeters = directDist;
+      notifyListeners();
+    }
   }
 
   LocationSnapshot? _buildSnapshot(LocationQuality? quality) {
